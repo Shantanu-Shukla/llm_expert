@@ -30,7 +30,7 @@ def initialize_session_state():
 def create_factory():
     """Create and return the LLM client factory."""
     try:
-        factory = LLMClientFactory(load_env=False)
+        factory = LLMClientFactory()
         return factory
     except Exception as e:
         st.error(f"Error initializing LLM Client Factory: {str(e)}")
@@ -56,11 +56,22 @@ def render_sidebar():
         if api_key:
             st.session_state.api_key = api_key
 
+        # Create factory to get available models
+        factory = create_factory()
+        if not factory:
+            st.error("Failed to initialize LLM client factory.")
+            return api_key, "gpt-4o-mini"  # Default model if factory fails
+
+        # Get available models
+        try:
+            available_models = factory.get_available_models("openai")
+        except Exception as e:
+            st.error(f"Error getting available models: {str(e)}")
+            available_models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"]  # Fallback
+
         # Model selection
         st.header("Model Settings")
-        model = st.selectbox(
-            "OpenAI Model", options=["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"], index=0
-        )
+        model = st.selectbox("OpenAI Model", options=available_models, index=0)
 
         # Create a button to clear history
         if st.button("Clear History"):
@@ -94,11 +105,8 @@ def render_summarizer_tab(api_key, model):
 
                 # Create summarizer client
                 client = factory.create_client(
-                    "openai", model=model, client_type="summarizer"
+                    "openai", model=model, client_type="summarizer", api_key=api_key
                 )
-
-                # Override the API key in the client
-                client.client.api_key = api_key
 
                 # Process the URL
                 result = client.process(url)
@@ -152,11 +160,11 @@ def render_extractor_tab(api_key, model):
 
                 # Create extractor client
                 client = factory.create_client(
-                    "openai", model=model, client_type="content_extractor"
+                    "openai",
+                    model=model,
+                    client_type="content_extractor",
+                    api_key=api_key,
                 )
-
-                # Override the API key in the client
-                client.client.api_key = api_key
 
                 # Process the URL
                 result = client.process(url, extraction_targets)
@@ -206,11 +214,11 @@ def render_sentiment_tab(api_key, model):
 
                 # Create sentiment analyzer client
                 client = factory.create_client(
-                    "openai", model=model, client_type="sentiment_analyzer"
+                    "openai",
+                    model=model,
+                    client_type="sentiment_analyzer",
+                    api_key=api_key,
                 )
-
-                # Override the API key in the client
-                client.client.api_key = api_key
 
                 # Process the URL
                 result = client.process(url)
@@ -256,11 +264,8 @@ def render_seo_tab(api_key, model):
 
                 # Create SEO analyzer client
                 client = factory.create_client(
-                    "openai", model=model, client_type="seo_analyzer"
+                    "openai", model=model, client_type="seo_analyzer", api_key=api_key
                 )
-
-                # Override the API key in the client
-                client.client.api_key = api_key
 
                 # Process the URL
                 result = client.process(url)
