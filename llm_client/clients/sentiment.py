@@ -2,7 +2,7 @@
 Sentiment analyzer client module.
 """
 
-from ..llm_client import BaseClient
+from llm_client.llm_client import BaseClient
 
 
 class SentimentAnalyzer(BaseClient):

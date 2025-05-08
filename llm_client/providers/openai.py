@@ -3,12 +3,38 @@ OpenAI provider implementations.
 """
 
 from llm_client.clients.summarizer import WebsiteSummarizer
-from llm_client.clients import ContentExtractor
-from llm_client.clients import SentimentAnalyzer
-from llm_client.clients import SEOAnalyzer
+from llm_client.clients.extractor import ContentExtractor
+from llm_client.clients.sentiment import SentimentAnalyzer
+from llm_client.clients.seo import SEOAnalyzer
 
 
-class WebsiteSummarizerOpenAI(WebsiteSummarizer):
+class OpenAIClientMixin:
+    """
+    Mixin to handle OpenAI-specific client interactions
+    """
+
+    def process(self, url, *args, **kwargs):
+        """
+        Process a URL using OpenAI model
+
+        Args:
+            url (str): The URL to process
+            *args: Additional arguments
+            **kwargs: Additional keyword arguments
+
+        Returns:
+            str: The processed result
+        """
+        website_data = self.fetch_website_content(url)
+        messages = self.get_messages(website_data, *args, **kwargs)
+
+        response = self.client.chat.completions.create(
+            model=self.model, messages=messages
+        )
+        return response.choices[0].message.content
+
+
+class WebsiteSummarizerOpenAI(OpenAIClientMixin, WebsiteSummarizer):
     """
     OpenAI implementation of WebsiteSummarizer
     """
@@ -16,7 +42,7 @@ class WebsiteSummarizerOpenAI(WebsiteSummarizer):
     pass
 
 
-class ContentExtractorOpenAI(ContentExtractor):
+class ContentExtractorOpenAI(OpenAIClientMixin, ContentExtractor):
     """
     OpenAI implementation of ContentExtractor
     """
@@ -24,7 +50,7 @@ class ContentExtractorOpenAI(ContentExtractor):
     pass
 
 
-class SentimentAnalyzerOpenAI(SentimentAnalyzer):
+class SentimentAnalyzerOpenAI(OpenAIClientMixin, SentimentAnalyzer):
     """
     OpenAI implementation of SentimentAnalyzer
     """
@@ -32,7 +58,7 @@ class SentimentAnalyzerOpenAI(SentimentAnalyzer):
     pass
 
 
-class SEOAnalyzerOpenAI(SEOAnalyzer):
+class SEOAnalyzerOpenAI(OpenAIClientMixin, SEOAnalyzer):
     """
     OpenAI implementation of SEOAnalyzer
     """

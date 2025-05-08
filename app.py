@@ -25,6 +25,8 @@ def initialize_session_state():
         st.session_state.history = []
     if "api_key" not in st.session_state:
         st.session_state.api_key = ""
+    if "selected_provider" not in st.session_state:
+        st.session_state.selected_provider = "openai"
 
 
 def create_factory():
@@ -37,41 +39,89 @@ def create_factory():
         return None
 
 
+def on_provider_change():
+    """Called when the provider selection changes."""
+    # This resets the model selection when the provider changes
+    pass
+
+
 def render_sidebar():
     """Render the sidebar with configuration options."""
     with st.sidebar:
         st.title("LLM Website Analyzer")
-        st.markdown("Analyze websites using OpenAI models.")
+        st.markdown("Analyze websites using various LLM providers.")
 
-        # API Key input
+        # Create factory to get available providers and models
+        factory = create_factory()
+        if not factory:
+            st.error("Failed to initialize LLM client factory.")
+            return "", "openai", "gpt-4o-mini"  # Default values if factory fails
+
+        # API Key input (first)
         st.header("API Key")
         api_key = st.text_input(
-            "OpenAI API Key",
+            "Enter API Key",
             value=st.session_state.api_key,
             type="password",
-            help="Your OpenAI API key is required to use this application",
+            help="Enter the API key for your selected LLM provider",
         )
 
         # Save API key to session state
         if api_key:
             st.session_state.api_key = api_key
 
-        # Create factory to get available models
-        factory = create_factory()
-        if not factory:
-            st.error("Failed to initialize LLM client factory.")
-            return api_key, "gpt-4o-mini"  # Default model if factory fails
+        # LLM Settings (second)
+        st.header("LLM Settings")
 
-        # Get available models
+        # Get available providers
         try:
-            available_models = factory.get_available_models("openai")
+            available_providers = factory.get_available_providers()
+            if not available_providers:
+                st.warning(
+                    "No LLM providers found. Please install at least one provider package."
+                )
+                available_providers = ["openai"]  # Default fallback
+        except Exception as e:
+            st.error(f"Error getting available providers: {str(e)}")
+            available_providers = ["openai"]  # Fallback
+
+        # Provider selection
+        provider = st.selectbox(
+            "Select Provider",
+            options=available_providers,
+            index=(
+                available_providers.index(st.session_state.selected_provider)
+                if st.session_state.selected_provider in available_providers
+                else 0
+            ),
+            on_change=on_provider_change,
+            key="provider_selector",
+        )
+
+        # Update the selected provider in session state
+        st.session_state.selected_provider = provider
+
+        # Get available models for the selected provider
+        try:
+            available_models = factory.get_available_models(provider)
         except Exception as e:
             st.error(f"Error getting available models: {str(e)}")
-            available_models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"]  # Fallback
+            available_models = []  # Fallback
+
+            # Provider-specific fallbacks
+            if provider == "openai":
+                available_models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"]
+            elif provider == "anthropic":
+                available_models = [
+                    "claude-3-opus-20240229",
+                    "claude-3-sonnet-20240229",
+                    "claude-3-haiku-20240307",
+                ]
+            elif provider == "google":
+                available_models = ["gemini-pro", "gemini-pro-vision"]
 
         # Model selection
-        st.header("Model Settings")
-        model = st.selectbox("OpenAI Model", options=available_models, index=0)
+        model = st.selectbox("Select Model", options=available_models, index=0)
 
         # Create a button to clear history
         if st.button("Clear History"):
@@ -79,10 +129,67 @@ def render_sidebar():
             st.session_state.current_result = ""
             st.success("History cleared!")
 
-        return api_key, model
+        return api_key, provider, model
 
 
-def render_summarizer_tab(api_key, model):
+def process_website(url, provider, model, client_type, api_key, additional_params=None):
+    """
+    Process a website using the specified LLM provider and client type.
+
+    Args:
+        url (str): The website URL to process
+        provider (str): The LLM provider to use
+        model (str): The model to use
+        client_type (str): The type of analysis to perform
+        api_key (str): The API key for the selected provider
+        additional_params (dict, optional): Additional parameters for the client
+
+    Returns:
+        str: The processing result or error message
+    """
+    if not url:
+        return "Please enter a website URL."
+
+    if not api_key:
+        return "Please enter your API key in the sidebar."
+
+    try:
+        factory = create_factory()
+        if not factory:
+            return "Failed to create LLM client factory."
+
+        # Create client with selected options
+        client_kwargs = {"model": model, "client_type": client_type, "api_key": api_key}
+
+        client = factory.create_client(provider, **client_kwargs)
+
+        # Process the URL with any additional parameters
+        if additional_params:
+            result = client.process(url, **additional_params)
+        else:
+            result = client.process(url)
+
+        # Store the result
+        st.session_state.current_result = result
+
+        # Add to history
+        st.session_state.history.append(
+            {
+                "url": url,
+                "provider": provider,
+                "model": model,
+                "client_type": client_type,
+                "result": result,
+            }
+        )
+
+        return result
+
+    except Exception as e:
+        return f"Error processing website: {str(e)}"
+
+
+def render_summarizer_tab(api_key, provider, model):
     """Render the website summarizer tab."""
     st.header("Website Summary")
     st.markdown("Get a concise summary of any website's content.")
@@ -95,45 +202,13 @@ def render_summarizer_tab(api_key, model):
         "Generate Summary", type="primary", key="summarizer_btn"
     )
 
-    if process_clicked and url and api_key:
+    if process_clicked:
         with st.spinner("Analyzing website..."):
-            try:
-                factory = create_factory()
-                if not factory:
-                    st.error("Failed to create LLM client factory.")
-                    return
-
-                # Create summarizer client
-                client = factory.create_client(
-                    "openai", model=model, client_type="summarizer", api_key=api_key
-                )
-
-                # Process the URL
-                result = client.process(url)
-
-                # Store the result
-                st.session_state.current_result = result
-
-                # Add to history
-                st.session_state.history.append(
-                    {
-                        "url": url,
-                        "model": model,
-                        "client_type": "summarizer",
-                        "result": result,
-                    }
-                )
-
-                # Display result
-                st.markdown(result)
-
-            except Exception as e:
-                st.error(f"Error generating summary: {str(e)}")
-    elif process_clicked and not api_key:
-        st.error("Please enter your OpenAI API key in the sidebar.")
+            result = process_website(url, provider, model, "summarizer", api_key)
+            st.markdown(result)
 
 
-def render_extractor_tab(api_key, model):
+def render_extractor_tab(api_key, provider, model):
     """Render the content extractor tab."""
     st.header("Content Extraction")
     st.markdown("Extract specific information from websites.")
@@ -150,48 +225,20 @@ def render_extractor_tab(api_key, model):
 
     process_clicked = st.button("Extract Content", type="primary", key="extractor_btn")
 
-    if process_clicked and url and api_key:
+    if process_clicked:
         with st.spinner("Extracting content..."):
-            try:
-                factory = create_factory()
-                if not factory:
-                    st.error("Failed to create LLM client factory.")
-                    return
-
-                # Create extractor client
-                client = factory.create_client(
-                    "openai",
-                    model=model,
-                    client_type="content_extractor",
-                    api_key=api_key,
-                )
-
-                # Process the URL
-                result = client.process(url, extraction_targets)
-
-                # Store the result
-                st.session_state.current_result = result
-
-                # Add to history
-                st.session_state.history.append(
-                    {
-                        "url": url,
-                        "model": model,
-                        "client_type": "content_extractor",
-                        "result": result,
-                    }
-                )
-
-                # Display result
-                st.markdown(result)
-
-            except Exception as e:
-                st.error(f"Error extracting content: {str(e)}")
-    elif process_clicked and not api_key:
-        st.error("Please enter your OpenAI API key in the sidebar.")
+            result = process_website(
+                url,
+                provider,
+                model,
+                "content_extractor",
+                api_key,
+                {"target_info": extraction_targets},
+            )
+            st.markdown(result)
 
 
-def render_sentiment_tab(api_key, model):
+def render_sentiment_tab(api_key, provider, model):
     """Render the sentiment analyzer tab."""
     st.header("Sentiment Analysis")
     st.markdown("Analyze the sentiment and tone of website content.")
@@ -204,48 +251,15 @@ def render_sentiment_tab(api_key, model):
         "Analyze Sentiment", type="primary", key="sentiment_btn"
     )
 
-    if process_clicked and url and api_key:
+    if process_clicked:
         with st.spinner("Analyzing sentiment..."):
-            try:
-                factory = create_factory()
-                if not factory:
-                    st.error("Failed to create LLM client factory.")
-                    return
-
-                # Create sentiment analyzer client
-                client = factory.create_client(
-                    "openai",
-                    model=model,
-                    client_type="sentiment_analyzer",
-                    api_key=api_key,
-                )
-
-                # Process the URL
-                result = client.process(url)
-
-                # Store the result
-                st.session_state.current_result = result
-
-                # Add to history
-                st.session_state.history.append(
-                    {
-                        "url": url,
-                        "model": model,
-                        "client_type": "sentiment_analyzer",
-                        "result": result,
-                    }
-                )
-
-                # Display result
-                st.markdown(result)
-
-            except Exception as e:
-                st.error(f"Error analyzing sentiment: {str(e)}")
-    elif process_clicked and not api_key:
-        st.error("Please enter your OpenAI API key in the sidebar.")
+            result = process_website(
+                url, provider, model, "sentiment_analyzer", api_key
+            )
+            st.markdown(result)
 
 
-def render_seo_tab(api_key, model):
+def render_seo_tab(api_key, provider, model):
     """Render the SEO analyzer tab."""
     st.header("SEO Analysis")
     st.markdown("Analyze website content for search engine optimization.")
@@ -254,42 +268,10 @@ def render_seo_tab(api_key, model):
 
     process_clicked = st.button("Analyze SEO", type="primary", key="seo_btn")
 
-    if process_clicked and url and api_key:
+    if process_clicked:
         with st.spinner("Analyzing SEO..."):
-            try:
-                factory = create_factory()
-                if not factory:
-                    st.error("Failed to create LLM client factory.")
-                    return
-
-                # Create SEO analyzer client
-                client = factory.create_client(
-                    "openai", model=model, client_type="seo_analyzer", api_key=api_key
-                )
-
-                # Process the URL
-                result = client.process(url)
-
-                # Store the result
-                st.session_state.current_result = result
-
-                # Add to history
-                st.session_state.history.append(
-                    {
-                        "url": url,
-                        "model": model,
-                        "client_type": "seo_analyzer",
-                        "result": result,
-                    }
-                )
-
-                # Display result
-                st.markdown(result)
-
-            except Exception as e:
-                st.error(f"Error analyzing SEO: {str(e)}")
-    elif process_clicked and not api_key:
-        st.error("Please enter your OpenAI API key in the sidebar.")
+            result = process_website(url, provider, model, "seo_analyzer", api_key)
+            st.markdown(result)
 
 
 def render_history_tab():
@@ -304,6 +286,7 @@ def render_history_tab():
         with st.expander(
             f"#{len(st.session_state.history) - i}: {item['url']} ({item['client_type']})"
         ):
+            st.markdown(f"**Provider:** {item['provider']}")
             st.markdown(f"**Model:** {item['model']}")
             st.markdown(f"**Analysis Type:** {item['client_type']}")
             st.markdown("**Result:**")
@@ -315,7 +298,7 @@ def main():
     initialize_session_state()
 
     # Render sidebar and get configuration
-    api_key, model = render_sidebar()
+    api_key, provider, model = render_sidebar()
 
     # Create tabs for different analysis types
     summarizer_tab, extractor_tab, sentiment_tab, seo_tab, history_tab = st.tabs(
@@ -330,16 +313,16 @@ def main():
 
     # Render content for each tab
     with summarizer_tab:
-        render_summarizer_tab(api_key, model)
+        render_summarizer_tab(api_key, provider, model)
 
     with extractor_tab:
-        render_extractor_tab(api_key, model)
+        render_extractor_tab(api_key, provider, model)
 
     with sentiment_tab:
-        render_sentiment_tab(api_key, model)
+        render_sentiment_tab(api_key, provider, model)
 
     with seo_tab:
-        render_seo_tab(api_key, model)
+        render_seo_tab(api_key, provider, model)
 
     with history_tab:
         render_history_tab()

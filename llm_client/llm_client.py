@@ -116,7 +116,8 @@ class BaseClient:
 
     def process(self, url, *args, **kwargs):
         """
-        Process a URL
+        Process a URL - this is a base implementation that will be overridden
+        by provider-specific mixins
 
         Args:
             url (str): The URL to process
@@ -125,14 +126,14 @@ class BaseClient:
 
         Returns:
             str: The processed result
-        """
-        website_data = self.fetch_website_content(url)
-        messages = self.get_messages(website_data, *args, **kwargs)
 
-        response = self.client.chat.completions.create(
-            model=self.model, messages=messages
+        Raises:
+            NotImplementedError: If this method is not overridden by a provider-specific mixin
+        """
+        raise NotImplementedError(
+            "The base process method was called, but this should be overridden by a provider-specific mixin. "
+            "Make sure your provider classes inherit from the appropriate mixin first, then the client class."
         )
-        return response.choices[0].message.content
 
     def display_result(self, url, *args, **kwargs):
         """
